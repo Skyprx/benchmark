@@ -29,6 +29,9 @@
 #include "timers.h"
 
 namespace benchmark {
+namespace internal {
+extern std::map<std::string, std::string>* global_context;
+}
 
 namespace {
 
@@ -122,8 +125,10 @@ bool JSONReporter::ReportContext(const Context& context) {
       << FormatKV("mhz_per_cpu",
                   RoundDouble(info.cycles_per_second / 1000000.0))
       << ",\n";
-  out << indent << FormatKV("cpu_scaling_enabled", info.scaling_enabled)
-      << ",\n";
+  if (CPUInfo::Scaling::UNKNOWN != info.scaling) {
+    out << indent << FormatKV("cpu_scaling_enabled", info.scaling == CPUInfo::Scaling::ENABLED ? true : false)
+        << ",\n";
+  }
 
   out << indent << "\"caches\": [\n";
   indent = std::string(6, ' ');
@@ -158,6 +163,13 @@ bool JSONReporter::ReportContext(const Context& context) {
   const char build_type[] = "debug";
 #endif
   out << indent << FormatKV("library_build_type", build_type) << "\n";
+
+  if (internal::global_context != nullptr) {
+    for (const auto& kv: *internal::global_context) {
+      out << indent << FormatKV(kv.first, kv.second) << "\n";
+    }
+  }
+
   // Close context block and open the list of benchmarks.
   out << inner_indent << "},\n";
   out << inner_indent << "\"benchmarks\": [\n";

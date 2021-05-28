@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cinttypes>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -31,13 +32,9 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <sstream>
 #include <thread>
-
-#ifndef __STDC_FORMAT_MACROS
-#define __STDC_FORMAT_MACROS
-#endif
-#include <inttypes.h>
 
 #include "benchmark/benchmark.h"
 #include "benchmark_api_internal.h"
@@ -157,76 +154,9 @@ bool BenchmarkFamilies::FindBenchmarks(
 
     for (auto const& args : family->args_) {
       for (int num_threads : *thread_counts) {
-        BenchmarkInstance instance;
-        instance.name.function_name = family->name_;
-        instance.benchmark = family.get();
-        instance.aggregation_report_mode = family->aggregation_report_mode_;
-        instance.arg = args;
-        instance.time_unit = family->time_unit_;
-        instance.range_multiplier = family->range_multiplier_;
-        instance.min_time = family->min_time_;
-        instance.iterations = family->iterations_;
-        instance.repetitions = family->repetitions_;
-        instance.measure_process_cpu_time = family->measure_process_cpu_time_;
-        instance.use_real_time = family->use_real_time_;
-        instance.use_manual_time = family->use_manual_time_;
-        instance.complexity = family->complexity_;
-        instance.complexity_lambda = family->complexity_lambda_;
-        instance.statistics = &family->statistics_;
-        instance.threads = num_threads;
+        BenchmarkInstance instance(family.get(), args, num_threads);
 
-        // Add arguments to instance name
-        size_t arg_i = 0;
-        for (auto const& arg : args) {
-          if (!instance.name.args.empty()) {
-            instance.name.args += '/';
-          }
-
-          if (arg_i < family->arg_names_.size()) {
-            const auto& arg_name = family->arg_names_[arg_i];
-            if (!arg_name.empty()) {
-              instance.name.args += StrFormat("%s:", arg_name.c_str());
-            }
-          }
-
-          instance.name.args += StrFormat("%" PRId64, arg);
-          ++arg_i;
-        }
-
-        if (!IsZero(family->min_time_))
-          instance.name.min_time =
-              StrFormat("min_time:%0.3f", family->min_time_);
-        if (family->iterations_ != 0) {
-          instance.name.iterations =
-              StrFormat("iterations:%lu",
-                        static_cast<unsigned long>(family->iterations_));
-        }
-        if (family->repetitions_ != 0)
-          instance.name.repetitions =
-              StrFormat("repeats:%d", family->repetitions_);
-
-        if (family->measure_process_cpu_time_) {
-          instance.name.time_type = "process_time";
-        }
-
-        if (family->use_manual_time_) {
-          if (!instance.name.time_type.empty()) {
-            instance.name.time_type += '/';
-          }
-          instance.name.time_type += "manual_time";
-        } else if (family->use_real_time_) {
-          if (!instance.name.time_type.empty()) {
-            instance.name.time_type += '/';
-          }
-          instance.name.time_type += "real_time";
-        }
-
-        // Add the number of threads used to the name
-        if (!family->thread_counts_.empty()) {
-          instance.name.threads = StrFormat("threads:%d", instance.threads);
-        }
-
-        const auto full_name = instance.name.str();
+        const auto full_name = instance.name().str();
         if ((re.Match(full_name) && !isNegativeFilter) ||
             (!re.Match(full_name) && isNegativeFilter)) {
           instance.last_benchmark_instance = (&args == &family->args_.back());
@@ -277,6 +207,11 @@ Benchmark::Benchmark(const char* name)
 
 Benchmark::~Benchmark() {}
 
+Benchmark* Benchmark::Name(const std::string& name) {
+  SetName(name.c_str());
+  return this;
+}
+
 Benchmark* Benchmark::Arg(int64_t x) {
   CHECK(ArgsCnt() == -1 || ArgsCnt() == 1);
   args_.push_back({x});
@@ -303,33 +238,41 @@ Benchmark* Benchmark::Ranges(
     const std::vector<std::pair<int64_t, int64_t>>& ranges) {
   CHECK(ArgsCnt() == -1 || ArgsCnt() == static_cast<int>(ranges.size()));
   std::vector<std::vector<int64_t>> arglists(ranges.size());
-  std::size_t total = 1;
   for (std::size_t i = 0; i < ranges.size(); i++) {
     AddRange(&arglists[i], ranges[i].first, ranges[i].second,
              range_multiplier_);
-    total *= arglists[i].size();
   }
 
-  std::vector<std::size_t> ctr(arglists.size(), 0);
+  ArgsProduct(arglists);
 
+  return this;
+}
+
+Benchmark* Benchmark::ArgsProduct(
+    const std::vector<std::vector<int64_t>>& arglists) {
+  CHECK(ArgsCnt() == -1 || ArgsCnt() == static_cast<int>(arglists.size()));
+
+  std::vector<std::size_t> indices(arglists.size());
+  const std::size_t total = std::accumulate(
+      std::begin(arglists), std::end(arglists), std::size_t{1},
+      [](const std::size_t res, const std::vector<int64_t>& arglist) {
+        return res * arglist.size();
+      });
+  std::vector<int64_t> args;
+  args.reserve(arglists.size());
   for (std::size_t i = 0; i < total; i++) {
-    std::vector<int64_t> tmp;
-    tmp.reserve(arglists.size());
-
-    for (std::size_t j = 0; j < arglists.size(); j++) {
-      tmp.push_back(arglists[j].at(ctr[j]));
+    for (std::size_t arg = 0; arg < arglists.size(); arg++) {
+      args.push_back(arglists[arg][indices[arg]]);
     }
+    args_.push_back(args);
+    args.clear();
 
-    args_.push_back(std::move(tmp));
-
-    for (std::size_t j = 0; j < arglists.size(); j++) {
-      if (ctr[j] + 1 < arglists[j].size()) {
-        ++ctr[j];
-        break;
-      }
-      ctr[j] = 0;
-    }
+    std::size_t arg = 0;
+    do {
+      indices[arg] = (indices[arg] + 1) % arglists[arg].size();
+    } while (indices[arg++] == 0 && arg < arglists.size());
   }
+
   return this;
 }
 

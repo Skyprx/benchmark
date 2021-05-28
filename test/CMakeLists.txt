@@ -113,6 +113,9 @@ add_test(NAME map_test COMMAND map_test --benchmark_min_time=0.01)
 compile_benchmark_test(multiple_ranges_test)
 add_test(NAME multiple_ranges_test COMMAND multiple_ranges_test --benchmark_min_time=0.01)
 
+compile_benchmark_test(args_product_test)
+add_test(NAME args_product_test COMMAND args_product_test --benchmark_min_time=0.01)
+
 compile_benchmark_test_with_main(link_main_test)
 add_test(NAME link_main_test COMMAND link_main_test --benchmark_min_time=0.01)
 
@@ -124,6 +127,9 @@ add_test(NAME templated_fixture_test COMMAND templated_fixture_test --benchmark_
 
 compile_output_test(user_counters_test)
 add_test(NAME user_counters_test COMMAND user_counters_test --benchmark_min_time=0.01)
+
+compile_output_test(perf_counters_test)
+add_test(NAME perf_counters_test COMMAND perf_counters_test --benchmark_min_time=0.01 --benchmark_perf_counters=CYCLES,BRANCHES)
 
 compile_output_test(internal_threading_test)
 add_test(NAME internal_threading_test COMMAND internal_threading_test --benchmark_min_time=0.01)
@@ -190,9 +196,11 @@ if (BENCHMARK_ENABLE_GTEST_TESTS)
 
   add_gtest(benchmark_gtest)
   add_gtest(benchmark_name_gtest)
+  add_gtest(benchmark_random_interleaving_gtest)
   add_gtest(commandlineflags_gtest)
   add_gtest(statistics_gtest)
   add_gtest(string_util_gtest)
+  add_gtest(perf_counters_gtest)
 endif(BENCHMARK_ENABLE_GTEST_TESTS)
 
 ###############################################################################
